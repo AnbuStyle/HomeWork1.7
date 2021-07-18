@@ -1,16 +1,21 @@
 package ru.geekbrains.client;
 
+import javafx.application.Platform;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.*;
-import javafx.scene.layout.HBox;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.AnchorPane;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.ResourceBundle;
 
 public class Controller implements Initializable {
@@ -18,17 +23,19 @@ public class Controller implements Initializable {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
+    private String nick;
+
 
     @FXML
-    private HBox clientPanel;
+    private AnchorPane clientPanel;
     @FXML
-    private HBox msgPanel;
+    private AnchorPane msgPanel;
     @FXML
     private TextField textField;
     @FXML
     private Button btnSend;
     @FXML
-    private ListView clientList;
+    private ListView<String> clientList;
     @FXML
     private TextArea textArea;
     @FXML
@@ -36,59 +43,89 @@ public class Controller implements Initializable {
     @FXML
     private TextField loginField;
     @FXML
-    private HBox authPanel;
+    private AnchorPane authPanel;
+    private boolean isAuthSuccess;
 
-
-    private void connection() {
+    private void connect() {
         try {
-            this.socket = new Socket("Localhost",8189);
+            this.socket = new Socket("localhost", 8189);
             this.in = new DataInputStream(socket.getInputStream());
             this.out = new DataOutputStream(socket.getOutputStream());
             setAuth(false);
-
+            new Thread(this::closeClient).start();
             new Thread(() -> {
                 try {
-                    while (true){
-                        final String msgFromServer = in.readUTF();
-                        if(msgFromServer.startsWith("/authok")){
+                    while (true) {
+                        final String msgAuth = in.readUTF();
+                        System.out.println("CLIENT: Received message: " + msgAuth);
+                        if (msgAuth.startsWith("/authok")) {
                             setAuth(true);
+
+                            nick = msgAuth.split("\\s")[1];
+                            textArea.appendText("Успешная авторизация под ником " + nick + "\n");
                             break;
                         }
-                        textArea.appendText(msgFromServer + "\n");
+                        textArea.appendText(msgAuth + "\n");
                     }
-                    while (true){
-                        final String msgFromServer = in.readUTF();
+                    while (true) {
+                        String msgFromServer = in.readUTF();
+                        System.out.println("CLIENT: Received message: " + msgFromServer);
+                        if (msgFromServer.startsWith(nick)) {
+                            msgFromServer = "[You] " + msgFromServer;
+                        }
                         if ("/end".equalsIgnoreCase(msgFromServer)) {
                             break;
                         }
+                        if (msgFromServer.startsWith("/clients")) {
+                            final List<String> clients = new ArrayList<>(Arrays.asList(msgFromServer.split("\\s")));
+                            clients.remove(0);
+                            clientList.getItems().clear();
+                            clientList.getItems().addAll(clients);
+                            continue;
+                        }
                         textArea.appendText(msgFromServer + "\n");
                     }
-                }catch (Exception e){
+                } catch (Exception e) {
                     e.printStackTrace();
-                    throw new RuntimeException();
+                    throw new RuntimeException(e);
+                } finally {
+                    try {
+                        setAuth(false);
+
+                        socket.close();
+                        nick = "";
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+
                 }
             }).start();
 
-        }catch (IOException e){
+        } catch (IOException e) {
             e.printStackTrace();
             throw new RuntimeException(e);
         }
     }
 
     private void setAuth(boolean isAuthSuccess) {
+        this.isAuthSuccess = isAuthSuccess;
         authPanel.setVisible(!isAuthSuccess);
         authPanel.setManaged(!isAuthSuccess);
 
         msgPanel.setVisible(isAuthSuccess);
         msgPanel.setManaged(isAuthSuccess);
 
-
         clientPanel.setVisible(isAuthSuccess);
-        clientPanel.setVisible(isAuthSuccess);
+        clientPanel.setManaged(isAuthSuccess);
     }
 
     public void sendAuth(ActionEvent actionEvent) {
+        if (socket == null || socket.isClosed()) {
+            connect();
+        }
+
         try {
+            System.out.println("CLIENT: Send auth message");
             out.writeUTF("/auth " + loginField.getText() + " " + passwordField.getText());
             loginField.clear();
             passwordField.clear();
@@ -99,7 +136,9 @@ public class Controller implements Initializable {
 
     public void sendMsg(ActionEvent actionEvent) {
         try {
-            out.writeUTF(textField.getText());
+            final String msg = textField.getText();
+            System.out.println("CLIENT: Send message to server: " + msg);
+            out.writeUTF(msg);
             textField.clear();
             textField.requestFocus();
         } catch (IOException e) {
@@ -109,6 +148,32 @@ public class Controller implements Initializable {
 
     @Override
     public void initialize(URL location, ResourceBundle resources) {
-        connection();
+        connect();
+    }
+
+    public void selectClient(MouseEvent mouseEvent) {
+        if (mouseEvent.getClickCount() == 2) {
+            final String msg = textField.getText();
+            String nickname = clientList.getSelectionModel().getSelectedItem();
+            textField.setText("/w " + nickname + " " + msg);
+            textField.requestFocus();
+            textField.selectEnd();
+        }
+    }
+
+    public void closeClient() {
+        try {
+            Thread.sleep(120000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        if (!isAuthSuccess) {
+            try {
+                socket.close();
+                Platform.exit();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
