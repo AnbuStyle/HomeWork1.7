@@ -8,7 +8,8 @@ import java.net.Socket;
 public class ClientHandler {
     private final Socket socket;
     private final ChatServer server;
-    private final   DataInputStream in;
+
+    private final DataInputStream in;
     private final DataOutputStream out;
 
     private String name;
@@ -20,46 +21,48 @@ public class ClientHandler {
             this.server = server;
             this.in = new DataInputStream(socket.getInputStream());
             this.out = new DataOutputStream(socket.getOutputStream());
-            new Thread(() -> {
+            new Thread(() ->{
                 try {
                     authenticate();
-                    readMessages();
+                    readMassages();
                 }finally {
                     closeConnection();
                 }
-                readMessages();
-            }).start();
-        }catch (IOException e){
-            throw new RuntimeException("Не могу создать обработчик для клиента", e);
+            } ).start();
+        } catch (IOException e){
+            throw new RuntimeException("Не могу создать обработчик", e);
         }
     }
 
     private void authenticate() {
         while (true){
-          try {
-              final String str = in.readUTF();
-              if (str.startsWith("/auth")) { // /auth login1 pass1
-                 final String[] split = str.split("\\s");
-                 final String login = split[1];
-                 final String pass = split[2];
-                 final String nickname = server.getAuthService().getNicknameByLoginAndPassword(login, pass);
-                if (nickname != null){
-                    if (!server.isNicknameBusy(nickname)){
-                        sendMessage("/authok" + nickname);
-                        this.name = nickname;
-                        server.broadcast("Пользователь " + nickname + " зашел в чат");
-                        server.subscribe(this);
-                    } else {
-                        sendMessage("Уже произведен вход учетной записи");
+            try {
+                final String str = in.readUTF();
+                if (str.startsWith("/auth")){
+                    final String[] split = str.split("\\s");
+                    final String login = split[1];
+                    final String pass = split[2];
+                    final String nickname = server.getAuthService().getNicknameByLoginAndPassword(login, pass);
+                    if (nickname != null){
+                        if (!server.isNicknameBusy(nickname)){
+                            sendMassages("/authok " + nickname);
+                            this.name = nickname;
+                            server.broadcast("/authok " + nickname);
+                            server.subscribe(this);
+                            break;
+                        }else {
+                            sendMassages("Уже произведен вход");
+                        }
+
+                    }else {
+                        sendMassages("Неверный логин/пароль");
                     }
-                } else {
-                    sendMessage("Неверные логин / пароль");
                 }
-              }
-          } catch (IOException e) {
-              e.printStackTrace();
-              throw new RuntimeException(e);
-          }
+            } catch (IOException e) {
+                e.printStackTrace();
+                throw new RuntimeException(e);
+
+            }
         }
     }
 
@@ -69,29 +72,41 @@ public class ClientHandler {
             in.close();
             out.close();
             socket.close();
-        }catch (IOException e) {
+        }catch (IOException e){
             e.printStackTrace();
-            throw new RuntimeException();
+            throw new RuntimeException(e);
         }
     }
 
-    public void sendMessage(String msg){
-        try {out.writeUTF(msg);
-        }catch (IOException e){
+    public void sendMassages(String msg){
+        try {
+            out.writeUTF(msg);
+        } catch (IOException e) {
             e.printStackTrace();
-            throw new RuntimeException();
+            throw new RuntimeException(e);
+
         }
     }
-    public void readMessages() {
+
+    public void readMassages() {
         try {
             while (true) {
                 final String strFromClient = in.readUTF();
-                if ("/end".equals(strFromClient)){
-                    return;
+                if (strFromClient.startsWith("/")) {
+                    if (strFromClient.equals("/end")) {
+                        break;
+                    }
+                    if (strFromClient.startsWith("/w ")) {
+                        String[] tokens = strFromClient.split("\\s");
+                        String nick = tokens[1];
+                        String msg = strFromClient.substring(4 + nick.length());
+                        server.sendMsgToClient(this, nick, msg);
+                    }
+                    continue;
                 }
-                System.out.println("Получено сообщение от " + name + ": " + strFromClient);
+                server.broadcast(name + ": " + strFromClient);
             }
-        }catch (IOException e){
+        } catch (IOException e) {
             e.printStackTrace();
             throw new RuntimeException(e);
         }
